@@ -10,7 +10,7 @@
 #include <algorithm>
 #include <fstream>
 
-#include <vulkan/vk_enum_string_helper.h>
+// #include <vulkan/vk_enum_string_helper.h>
 
 VkVertexInputBindingDescription Vertex::getBindingDescription()
 {
@@ -58,16 +58,20 @@ void Engine::mainLoop()
 {
 	// TODO: Delta time
 	
-	while (!glfwWindowShouldClose(glfwWindow))
+	while (!windowCloseRequested)
 	{
 		static auto startTime = std::chrono::high_resolution_clock::now();
 		static auto previousTime = std::chrono::high_resolution_clock::now();
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 		float deltaTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - previousTime).count();
-		
-		glfwPollEvents();
 
+		SDL_Event event; 
+		while(SDL_PollEvent(&event))
+		{
+			processEvent(event);
+		}
+		
 		if(EKeyDown && !QKeyDown)
 		{
 			cameraPosition.z += deltaTime * 1.f;
@@ -103,73 +107,82 @@ void Engine::mainLoop()
 	vkDeviceWaitIdle(vulkanDevice);
 }
 
+void Engine::processEvent(const SDL_Event& event)
+{
+	switch(event.type)
+	{
+	case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
+	{
+		windowCloseRequested = true;
+		break;
+	}
+	case SDL_EVENT_WINDOW_RESIZED:
+		{
+			frameBufferResized = true;
+		}break;
+	case SDL_EVENT_KEY_DOWN:
+	case SDL_EVENT_KEY_UP:
+		{
+			bool* keyFlag = nullptr;
+			switch(event.key.key)
+			{
+			case SDLK_W:
+				{
+					keyFlag = &WKeyDown;
+				}break;
+			case SDLK_S:
+				{
+					keyFlag = &SKeyDown;
+				}break;
+			case SDLK_A:
+				{
+					keyFlag = &AKeyDown;
+				}break;
+			case SDLK_D:
+				{
+					keyFlag = &DKeyDown;
+				}break;
+			case SDLK_Q:
+				{
+					keyFlag = &QKeyDown;
+				}break;
+			case SDLK_E:
+				{
+					keyFlag = &EKeyDown;
+
+				}break;
+			}
+			
+			if(keyFlag)
+			{
+				if(event.key.down)
+				{
+					*keyFlag = true;
+				}
+				else
+				{
+					*keyFlag = false;
+				}
+			}
+		}break;
+	default:
+		{
+		}break;
+	}
+}
+
 void Engine::initWindow()
 {
-	glfwInit();
+	SDL_Init(SDL_INIT_EVENTS | SDL_INIT_VIDEO);
 
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-	glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-
-	glfwWindow = glfwCreateWindow(WIDTH, HEIGHT, "Firefly", nullptr, nullptr);
-	glfwSetWindowUserPointer(glfwWindow, this);
-	glfwSetFramebufferSizeCallback(glfwWindow, framebufferResizeCallback);
-	glfwSetKeyCallback(glfwWindow, keyCallback);
+	sdlWindow = SDL_CreateWindow("Firefly", WIDTH, HEIGHT, SDL_WINDOW_RESIZABLE | SDL_WINDOW_VULKAN);
 }
 
 void Engine::cleanupWindow()
 {
-	glfwDestroyWindow(glfwWindow);
+	SDL_DestroyWindow(sdlWindow);
 
-	glfwTerminate();
-}
-
-void Engine::framebufferResizeCallback(GLFWwindow* window, int width, int height)
-{
-	Engine* engine = reinterpret_cast<Engine*>(glfwGetWindowUserPointer(window));
-	engine->frameBufferResized = true;
-}
-
-void Engine::keyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
-{
-	Engine* engine = reinterpret_cast<Engine*>(glfwGetWindowUserPointer(window));
-
-	bool* keyFlag = nullptr;
-	if(key == GLFW_KEY_W)
-	{
-		keyFlag = &engine->WKeyDown;
-	}
-	else if(key == GLFW_KEY_S)
-	{
-		keyFlag = &engine->SKeyDown;
-	}
-	else if(key == GLFW_KEY_A)
-	{
-		keyFlag = &engine->AKeyDown;
-	}
-	else if(key == GLFW_KEY_D)
-	{
-		keyFlag = &engine->DKeyDown;
-	}
-	else if(key == GLFW_KEY_Q)
-	{
-		keyFlag = &engine->QKeyDown;
-	}
-	else if(key == GLFW_KEY_E)
-	{
-		keyFlag = &engine->EKeyDown;
-	}
-	
-	if(keyFlag)
-	{
-		if(action == GLFW_PRESS)
-		{
-			*keyFlag = true;
-		}
-		else if(action == GLFW_RELEASE)
-		{
-			*keyFlag = false;
-		}
-	}
+	SDL_Quit();
 }
 
 void Engine::drawFrame(float deltaTime)
@@ -187,10 +200,12 @@ void Engine::drawFrame(float deltaTime)
 	{
 		// Handle minimization of window
 		int width = 0, height = 0;
-		glfwGetFramebufferSize(glfwWindow, &width, &height);
+		SDL_GetWindowSizeInPixels(sdlWindow, &width, &height);
 		while (width == 0 || height == 0) {
-			glfwGetFramebufferSize(glfwWindow, &width, &height);
-			glfwWaitEvents();
+			SDL_GetWindowSizeInPixels(sdlWindow, &width, &height);
+			SDL_Event event;
+			SDL_WaitEvent(&event);
+			processEvent(event);
 		}
 
 		vkDeviceWaitIdle(vulkanDevice);
@@ -374,10 +389,12 @@ void Engine::drawFrame(float deltaTime)
 		frameBufferResized = false;
 
 		int width = 0, height = 0;
-		glfwGetFramebufferSize(glfwWindow, &width, &height);
+		SDL_GetWindowSizeInPixels(sdlWindow, &width, &height);
 		while (width == 0 || height == 0) {
-			glfwGetFramebufferSize(glfwWindow, &width, &height);
-			glfwWaitEvents();
+			SDL_GetWindowSizeInPixels(sdlWindow, &width, &height);
+			SDL_Event event;
+			SDL_WaitEvent(&event);
+			processEvent(event);
 		}
 
 		vkDeviceWaitIdle(vulkanDevice);
@@ -405,10 +422,6 @@ void Engine::drawFrame(float deltaTime)
 
 void Engine::initGraphics()
 {
-	if (glfwVulkanSupported() == GLFW_FALSE)
-	{
-		throw std::runtime_error("Vulkan not supported");
-	}
 
 #ifndef NDEBUG
 	VkDebugUtilsMessengerCreateInfoEXT debugMessengerCreateInfo{};
@@ -441,11 +454,10 @@ void Engine::initGraphics()
 		std::vector<const char*> extensions;
 
 		{
-			uint32_t glfwExtensionCount = 0;
-			const char** glfwExtensions;
-			glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+			uint32_t sdlExtensionCount;
+			const char *const * sdlExtensions = SDL_Vulkan_GetInstanceExtensions(&sdlExtensionCount);
 
-			if (glfwExtensions == nullptr)
+			if (sdlExtensions == nullptr)
 			{
 				throw std::runtime_error("Failed to retrieve GLFW requested Vulkan extensions");
 			}
@@ -456,11 +468,11 @@ void Engine::initGraphics()
 			std::vector<VkExtensionProperties> supportedExtensions(supportedExtensionCount);
 			vkEnumerateInstanceExtensionProperties(nullptr, &supportedExtensionCount, supportedExtensions.data());
 
-			extensions.reserve(glfwExtensionCount);
+			extensions.reserve(sdlExtensionCount);
 
-			for (uint32_t glfwExtensionIdx = 0; glfwExtensionIdx < glfwExtensionCount; glfwExtensionIdx++)
+			for (uint32_t glfwExtensionIdx = 0; glfwExtensionIdx < sdlExtensionCount; glfwExtensionIdx++)
 			{
-				const char* glfwExtensionName = glfwExtensions[glfwExtensionIdx];
+				const char* glfwExtensionName = sdlExtensions[glfwExtensionIdx];
 
 				bool extensionSupported = false;
 				for (const VkExtensionProperties& extensionProperties : supportedExtensions)
@@ -555,8 +567,11 @@ void Engine::initGraphics()
 
 	// CREATE SURFACE
 	{
-		VkResult result = glfwCreateWindowSurface(vulkanInstance, glfwWindow, nullptr, &vulkanSurface);
-		VK_CHECK(result, "Failed to create window surface: {}");
+		
+		if(!SDL_Vulkan_CreateSurface(sdlWindow, vulkanInstance, nullptr, &vulkanSurface))
+		{
+			throw std::runtime_error(std::format("Failed to create window surface: {}", SDL_GetError()));
+		}
 	}
 
 	// PICK PHYSICAL DEVICE
@@ -1183,8 +1198,8 @@ void Engine::initGraphics()
 			throw std::runtime_error("Failed to load texture image!");
 		}
 
-		VkBuffer stagingBuffer{nullptr};
-		VkDeviceMemory stagingBufferMemory{nullptr};
+		VkBuffer stagingBuffer{0};
+		VkDeviceMemory stagingBufferMemory{0};
 
 		createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
 
@@ -1588,7 +1603,7 @@ void Engine::createSwapChain()
 	else
 	{
 		int width, height;
-		glfwGetFramebufferSize(glfwWindow, &width, &height);
+		SDL_GetWindowSizeInPixels(sdlWindow, &width, &height);
 
 		surfaceExtent = {
 			static_cast<uint32_t>(width),
