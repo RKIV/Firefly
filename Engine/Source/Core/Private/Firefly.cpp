@@ -866,8 +866,8 @@ void Engine::initGraphics()
 				return shaderModule;
 			};
 
-		VkShaderModule vertShaderModule = createShaderModule(readFile("Shaders/vert.spv"));
-		VkShaderModule fragShaderModule = createShaderModule(readFile("Shaders/frag.spv"));
+		VkShaderModule vertShaderModule = createShaderModule(readFile("Engine/Shaders/vert.spv"));
+		VkShaderModule fragShaderModule = createShaderModule(readFile("Engine/Shaders/frag.spv"));
 
 		VkPipelineShaderStageCreateInfo vertShaderStageInfo{};
 		vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -1191,7 +1191,7 @@ void Engine::initGraphics()
 	/// LOAD TEXTURE INTO IMAGE BUFFER
 	{
 		int texWidth, texHeight, texChannels;
-		stbi_uc* pixels = stbi_load("Textures/OuterWildsSquare.jpg", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
+		stbi_uc* pixels = stbi_load("Engine/Textures/SMPTE_Color_Bars.png", &texWidth, &texHeight, &texChannels, STBI_rgb_alpha);
 		VkDeviceSize imageSize = texWidth * texHeight * 4;
 
 		if (!pixels) {
