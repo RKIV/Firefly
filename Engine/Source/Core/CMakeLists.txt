@@ -1,3 +1,5 @@
 add_library(FireflyCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Private/Firefly.cpp")
 target_include_directories(FireflyCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/Public")
-target_link_libraries(FireflyCore PUBLIC ThirdParty)
+target_link_options(FireflyCore PRIVATE /machine:x64)
+target_link_libraries(FireflyCore ThirdParty)
+# target_link_libraries(FireflyCore "C:/Users/rober/Documents/VulkanSDK/1.3.296.0/Lib/vulkan-1.lib")
