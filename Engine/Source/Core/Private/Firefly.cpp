@@ -8,11 +8,9 @@
 #include <optional>
 #include <set>
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 
-// #include <vulkan/vk_enum_string_helper.h>
-
-uint32_t componentCounter = 0;
 
 VkVertexInputBindingDescription Vertex::getBindingDescription()
 {
@@ -118,15 +116,28 @@ void Engine::stepSimulation(float deltaTime)
 
 	if (InputState.GetKeyboardStateChange().LKey && InputState.GetKeyboardState().LKey)
 	{
-		EntityID e1 = scene.NewEntity();
-		EntityID e2 = scene.NewEntity();
-		EntityID e3 = scene.NewEntity();
-		scene.GetOrCreateComponent<TestComponent1>(e1);
-		scene.GetOrCreateComponent<TestComponent1>(e1);
-		scene.GetOrCreateComponent<TestComponent1>(e2);
-		scene.GetOrCreateComponent<TestComponent2>(e2);
-		scene.GetOrCreateComponent<TestComponent2>(e3);
-		scene.DebugPrint();
+		EntityID e0 = scene.CreateEntity();
+		EntityID e1 = scene.CreateEntity();
+		EntityID e2 = scene.CreateEntity();
+		scene.GetOrAddComponent<TestComponent1>(e0);
+		scene.GetOrAddComponent<TestComponent1>(e0);
+		scene.GetOrAddComponent<TestComponent1>(e1);
+		scene.GetOrAddComponent<TestComponent2>(e1);
+		scene.GetOrAddComponent<TestComponent2>(e2);
+		scene.DebugPrintState();
+		std::cout << "\n\n--------------------------------------\n\n";
+		EntityID e3 = scene.CreateEntity();
+		scene.GetOrAddComponent<TestComponent1>(e3);
+		scene.GetOrAddComponent<TestComponent2>(e3);
+		scene.DestroyEntity(e1);
+		scene.DebugPrintState();
+		std::cout << "\n\n--------------------------------------\n\n";
+		scene.RemoveComponent<TestComponent1>(e0);
+		EntityID e4 = scene.CreateEntity();
+		EntityID e5 = scene.CreateEntity();
+		scene.GetOrAddComponent<TestComponent2>(e4);
+		scene.GetOrAddComponent<TestComponent2>(e5);
+		scene.DebugPrintState();
 	}
 }
 
