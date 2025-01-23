@@ -12,6 +12,8 @@
 
 // #include <vulkan/vk_enum_string_helper.h>
 
+uint32_t componentCounter = 0;
+
 VkVertexInputBindingDescription Vertex::getBindingDescription()
 {
 	VkVertexInputBindingDescription bindingDescription{};
@@ -56,8 +58,6 @@ void Engine::run()
 
 void Engine::mainLoop()
 {
-	// TODO: Delta time
-	
 	while (!windowCloseRequested)
 	{
 		static auto startTime = std::chrono::high_resolution_clock::now();
@@ -65,46 +65,69 @@ void Engine::mainLoop()
 		auto currentTime = std::chrono::high_resolution_clock::now();
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
 		float deltaTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - previousTime).count();
-
-		SDL_Event event; 
-		while(SDL_PollEvent(&event))
-		{
-			processEvent(event);
-		}
 		
-		if(EKeyDown && !QKeyDown)
-		{
-			cameraPosition.z += deltaTime * 1.f;
-		}
-		else if(QKeyDown && !EKeyDown)
-		{
-			cameraPosition.z -= deltaTime * 1.f;
-		}
-
-		if(AKeyDown && !DKeyDown)
-		{
-			cameraPosition.y += deltaTime * 1.f;
-		}
-		else if(DKeyDown && !AKeyDown)
-		{
-			cameraPosition.y -= deltaTime * 1.f;
-		}
-
-		if(WKeyDown && !SKeyDown)
-		{
-			cameraPosition.x += deltaTime * 1.f;
-		}
-		else if(SKeyDown && !WKeyDown)
-		{
-			cameraPosition.x -= deltaTime * 1.f;
-		}
-		
+		stepSimulation(deltaTime);
 		drawFrame(deltaTime);
 		
 		previousTime = currentTime;
 	}
 
 	vkDeviceWaitIdle(vulkanDevice);
+}
+
+void Engine::stepSimulation(float deltaTime)
+{
+	const FInputState PreviousInputState = InputState;
+
+	SDL_Event event; 
+	while(SDL_PollEvent(&event))
+	{
+		processEvent(event);
+	}
+
+	InputState.KeyboardStateChangedMask.Mask = PreviousInputState.KeyboardStateMask.Mask ^ InputState.KeyboardStateMask.Mask;
+
+	const FInputState::FKeyboardState KeyboardState = InputState.GetKeyboardState();
+	
+	if(KeyboardState.EKey && !KeyboardState.QKey)
+	{
+		cameraPosition.z += deltaTime * 1.f;
+	}
+	else if(KeyboardState.QKey && !KeyboardState.EKey)
+	{
+		cameraPosition.z -= deltaTime * 1.f;
+	}
+
+	if(KeyboardState.AKey && !KeyboardState.DKey)
+	{
+		cameraPosition.y += deltaTime * 1.f;
+	}
+	else if(KeyboardState.DKey && !KeyboardState.AKey)
+	{
+		cameraPosition.y -= deltaTime * 1.f;
+	}
+
+	if(KeyboardState.WKey && !KeyboardState.SKey)
+	{
+		cameraPosition.x += deltaTime * 1.f;
+	}
+	else if(KeyboardState.SKey && !KeyboardState.WKey)
+	{
+		cameraPosition.x -= deltaTime * 1.f;
+	}
+
+	if (InputState.GetKeyboardStateChange().LKey && InputState.GetKeyboardState().LKey)
+	{
+		EntityID e1 = scene.NewEntity();
+		EntityID e2 = scene.NewEntity();
+		EntityID e3 = scene.NewEntity();
+		scene.GetOrCreateComponent<TestComponent1>(e1);
+		scene.GetOrCreateComponent<TestComponent1>(e1);
+		scene.GetOrCreateComponent<TestComponent1>(e2);
+		scene.GetOrCreateComponent<TestComponent2>(e2);
+		scene.GetOrCreateComponent<TestComponent2>(e3);
+		scene.DebugPrint();
+	}
 }
 
 void Engine::processEvent(const SDL_Event& event)
@@ -124,44 +147,16 @@ void Engine::processEvent(const SDL_Event& event)
 	case SDL_EVENT_KEY_UP:
 		{
 			bool* keyFlag = nullptr;
-			switch(event.key.key)
+			if(event.key.key >= SDLK_A && event.key.key <= SDLK_Z)
 			{
-			case SDLK_W:
-				{
-					keyFlag = &WKeyDown;
-				}break;
-			case SDLK_S:
-				{
-					keyFlag = &SKeyDown;
-				}break;
-			case SDLK_A:
-				{
-					keyFlag = &AKeyDown;
-				}break;
-			case SDLK_D:
-				{
-					keyFlag = &DKeyDown;
-				}break;
-			case SDLK_Q:
-				{
-					keyFlag = &QKeyDown;
-				}break;
-			case SDLK_E:
-				{
-					keyFlag = &EKeyDown;
-
-				}break;
-			}
-			
-			if(keyFlag)
-			{
+				uint32_t mask = (1 << (event.key.key - SDLK_A));
 				if(event.key.down)
 				{
-					*keyFlag = true;
+					InputState.KeyboardStateMask.Mask |= mask;
 				}
 				else
 				{
-					*keyFlag = false;
+					InputState.KeyboardStateMask.Mask &= !(mask);
 				}
 			}
 		}break;

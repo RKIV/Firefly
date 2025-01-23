@@ -20,6 +20,9 @@
 #include <vector>
 #include <array>
 #include <iostream>
+#include <bitset>
+#include <queue>
+#include <format>
 
 inline const char *Vulkan_GetResultString(VkResult result)
 {
@@ -133,6 +136,319 @@ struct UniformBufferObject
 	alignas(16) glm::mat4 proj;
 };
 
+extern uint32_t componentCounter;
+
+template <class T>
+uint32_t GetComponentID()
+{
+	static uint32_t componentID = componentCounter++;
+	return componentID;
+}
+
+typedef uint64_t EntityID;
+constexpr uint8_t MAX_COMPONENTS = 32;
+typedef std::bitset<MAX_COMPONENTS> ComponentMask;
+
+constexpr uint32_t NUM_ENTITIES_PER_CHUNK = 64;
+struct ComponentPoolChunk
+{
+
+	ComponentPoolChunk() = default;
+
+	ComponentPoolChunk(const ComponentPoolChunk&) = delete;
+	ComponentPoolChunk& operator =(const ComponentPoolChunk&) = delete;
+
+	ComponentPoolChunk(ComponentPoolChunk&& Other) noexcept
+	{
+		componentSize = Other.componentSize;
+		Other.componentSize = 0;
+		freeIndices = Other.freeIndices;
+		Other.freeIndices = 0;
+		delete[] pData;
+		pData = Other.pData;
+		Other.pData = nullptr;
+	}
+	
+	ComponentPoolChunk& operator=(ComponentPoolChunk&& Other) noexcept
+	{
+		componentSize = Other.componentSize;
+		Other.componentSize = 0;
+		freeIndices = Other.freeIndices;
+		Other.freeIndices = 0;
+		delete[] pData;
+		pData = Other.pData;
+		Other.pData = nullptr;
+		return *this;
+	}
+
+	ComponentPoolChunk(size_t inComponentSize)
+	{
+		componentSize = inComponentSize;
+		freeIndices = ~0Ui64;
+		// This EntityID at the end will store the sparse array id
+		pData = new char[(componentSize + sizeof(EntityID)) * NUM_ENTITIES_PER_CHUNK];
+	}
+
+	~ComponentPoolChunk()
+	{
+		componentSize = 0;
+		delete[] pData;
+		pData = nullptr;
+	}
+
+	uint32_t AllocateComponent(EntityID id)
+	{
+		assert(freeIndices != 0);
+		assert(IsValid());
+		
+		uint8_t firstFreeIndex = 0;
+		uint64_t mask = 1;
+		while((mask & freeIndices) == 0)
+		{
+			firstFreeIndex++;
+			mask = mask << 1;
+		}
+		freeIndices &= ~mask;
+		EntityID* idPtr = reinterpret_cast<EntityID*>(pData + firstFreeIndex * (componentSize + sizeof(EntityID)) + componentSize);
+		*idPtr = id; 
+		return firstFreeIndex;
+	}
+
+	void FreeComponent(uint32_t index)
+	{
+		assert(index >= 0 && index < NUM_ENTITIES_PER_CHUNK);
+		assert((freeIndices & (1Ui64 << index)) == 0);
+		assert(IsValid());
+
+		freeIndices |= 1 << index;
+	}
+
+	void* GetComponent(uint32_t index) const
+	{
+		assert(index < NUM_ENTITIES_PER_CHUNK);
+		assert((freeIndices & (1Ui64 << index)) == 0);
+		assert(IsValid());
+
+		return pData + index * (componentSize + sizeof(EntityID));		
+	}
+
+	EntityID GetAssociatedId(uint32_t idx) const
+	{
+		assert((freeIndices & (1Ui64 << idx)) == 0);
+		EntityID* idPtr = reinterpret_cast<EntityID*>(pData + idx * (componentSize + sizeof(EntityID)) + componentSize);
+		return *idPtr;
+	}
+	
+	bool IsEmpty() const { return ~freeIndices == 0; }
+
+	bool IsFull() const { return freeIndices == 0; }
+
+	bool IsValid() const { return componentSize > 0 && pData != nullptr; }
+
+	size_t componentSize = 0;
+	uint64_t freeIndices = 0;
+	char* pData = nullptr;
+};
+
+constexpr uint32_t NUM_CHUNKS_PER_POOL = 8;
+constexpr uint32_t MAX_ENTITIES = NUM_CHUNKS_PER_POOL * NUM_ENTITIES_PER_CHUNK;
+struct ComponentPool
+{
+	ComponentPool(size_t inComponentSize)
+	{
+		componentSize = inComponentSize;
+	}
+
+	void DebugPrint()
+	{
+		std::cout << "\tSparse Map:\n";
+		for (uint32_t i = 0; i < MAX_ENTITIES; ++i)
+		{
+			if (sparseMap[i] != 0)
+			{
+				std::cout << "\t\tEntity " << i << ": " << sparseMap[i] - 1 << "\n";
+			}
+		}
+		for (uint32_t chunkIndex = 0; chunkIndex < NUM_CHUNKS_PER_POOL; chunkIndex++)
+		{
+			std::cout << "Chunk " << chunkIndex << ":\n";
+			if (chunks[chunkIndex].IsValid())
+			{
+				std::cout << "\t\t" << std::format("{:b}", chunks[chunkIndex].freeIndices) << "\n";
+			}
+			else
+			{
+				std::cout << "\t\tUnused\n";
+			}
+		}
+	}
+
+	void* GetOrCreateComponent(EntityID id)
+	{
+		assert(id < MAX_ENTITIES);
+
+		if(sparseMap[id] == 0)
+		{
+			for(uint32_t i = 0; i < NUM_CHUNKS_PER_POOL; ++i)
+			{
+				if(!chunks[i].IsValid())
+				{
+					chunks[i] = ComponentPoolChunk(componentSize);
+				}
+
+				if(chunks[i].IsValid() && !chunks[i].IsFull())
+				{
+					uint32_t idx = chunks[i].AllocateComponent(id);
+					// 0 is our null value so we store the actual idx + 1
+					sparseMap[id] = idx + i * NUM_ENTITIES_PER_CHUNK + 1;
+					return chunks[i].GetComponent(idx);
+				}
+			}
+
+			// Second pass if we couldn't find any empty chunks then we try to allocate new ones
+			for(uint32_t i = 0; i < NUM_CHUNKS_PER_POOL; ++i)
+			{
+				if(!chunks[i].IsValid())
+				{
+					new(&chunks[i]) ComponentPoolChunk(componentSize);
+					uint32_t idx = chunks[i].AllocateComponent(id);
+					sparseMap[id] = idx + i * NUM_ENTITIES_PER_CHUNK + 1;
+					return chunks[i].GetComponent(idx);
+				}
+			}
+
+			// We ran out of chunk space?
+			assert(false);
+			return nullptr;
+		}
+		else
+		{
+			uint32_t chunkIdx = (sparseMap[id] - 1) / NUM_ENTITIES_PER_CHUNK;
+			uint32_t idx = (sparseMap[id] - 1) % NUM_ENTITIES_PER_CHUNK;
+			return chunks[chunkIdx].GetComponent(idx);
+		}
+	}
+
+	void FreeComponent(EntityID id)
+	{
+		assert(id < MAX_ENTITIES);
+		assert(sparseMap[id] != 0);
+		uint32_t chunkIdx = (sparseMap[id] - 1) / NUM_ENTITIES_PER_CHUNK;
+		uint32_t idx = (sparseMap[id] - 1) % NUM_ENTITIES_PER_CHUNK;
+		chunks[chunkIdx].FreeComponent(idx);
+
+		// If the chunk is now empty we can free it
+		if(chunks[chunkIdx].IsEmpty())
+		{
+			for(uint32_t i = NUM_CHUNKS_PER_POOL - 1; i >= chunkIdx; --i)
+			{
+				if(i == chunkIdx)
+				{
+					chunks[chunkIdx].~ComponentPoolChunk();
+					break;
+				}
+				if(chunks[i].IsValid())
+				{
+					chunks[chunkIdx] = std::move(chunks[i]);
+					// Update the sparse map to point to the correct chunk
+					for(uint32_t j = 0; j < NUM_ENTITIES_PER_CHUNK; ++j)
+					{
+						if(chunks[chunkIdx].freeIndices & (1Ui64 << j) == 0)
+						{
+							sparseMap[chunks[chunkIdx].GetAssociatedId(j)] = chunkIdx * NUM_ENTITIES_PER_CHUNK + j;
+						}
+					}
+					break;
+				}
+
+			}
+		}
+		sparseMap[id] = 0;
+	}
+
+	ComponentPoolChunk chunks[NUM_CHUNKS_PER_POOL];
+	uint32_t sparseMap[MAX_ENTITIES] = {};
+	size_t componentSize = 0;
+};
+
+struct Scene
+{
+	struct EntityDesc
+	{
+		EntityID id;
+		ComponentMask mask;
+	};
+
+	EntityID NewEntity()
+	{
+		entities.push_back({entities.size(), ComponentMask()});
+		return entities.back().id;
+	}
+
+	template<typename T>
+	T* GetOrCreateComponent(EntityID id)
+	{
+		uint32_t componentId = GetComponentID<T>();
+
+		if(componentPools.size() <= componentId)
+		{
+			componentPools.resize(componentId + 1, nullptr);
+		}
+		
+		if(componentPools[componentId] == nullptr)
+		{
+			componentPools[componentId] = new ComponentPool(sizeof(T));
+		}
+
+		entities[id].mask.set(componentId);
+
+		return static_cast<T*>(componentPools[componentId]->GetOrCreateComponent(id));
+	}
+
+	void DebugPrint()
+	{
+		std::cout << "Entities: \n";
+		for(uint32_t i = 0; i < entities.size(); ++i)
+		{
+			std::cout << "\t" << entities[i].id << "\n";
+			std::cout << "\t\t";
+			for (uint32_t j = 0; j < entities[i].mask.size(); ++j)
+			{
+				std::cout << entities[i].mask.test(j);
+			}
+			std::cout << "\n";
+		}
+
+		for (uint32_t i = 0; i < componentPools.size(); ++i)
+		{
+			if (componentPools[i])
+			{
+				std::cout << "Component Pool " << i << ":\n";
+				componentPools[i]->DebugPrint();
+			}
+		}
+		std::cout << std::endl;
+	}
+
+	std::vector<EntityDesc> entities;
+	// TODO: Could probably turn this into a map
+	std::vector<ComponentPool*> componentPools;
+};
+
+
+struct TestComponent1
+{
+	int32_t Param1;
+	int32_t Param2;
+};
+
+struct TestComponent2
+{
+	int32_t Param1;
+	int32_t Param2;
+	int32_t Param3;
+};
+
 class Engine
 {
 public:
@@ -140,6 +456,8 @@ public:
 
 private:
 	void mainLoop();
+
+	void stepSimulation(float deltaTime);
 
 	void processEvent(const SDL_Event& event);
 
@@ -267,19 +585,70 @@ private:
 	VkSampler textureSampler;
 
 private:
+	Scene scene;
+	
 	bool windowCloseRequested = false;
 
 	uint32_t inFlightFrameIdx = 0;
 
 	bool frameBufferResized = false;
 
-	bool WKeyDown = false;
-	bool SKeyDown = false;
-	bool AKeyDown = false;
-	bool DKeyDown = false;
-	bool QKeyDown = false;
-	bool EKeyDown = false;
+	enum class EBinaryInput
+	{
+		AKey = 0, BKey, CKey, DKey,
+		EKey, FKey, GKey, HKey,
+		IKey, JKey, KKey, LKey,
+		MKey, NKey, OKey, PKey,
+		QKey, RKey, SKey, TKey,
+		UKey, VKey, WKey, XKey,
+		YKey, ZKey
+	};
 
+	struct FInputState
+	{
+		struct FKeyboardState
+		{
+			uint8_t AKey : 1;
+			uint8_t BKey : 1;
+			uint8_t CKey : 1;
+			uint8_t DKey : 1;
+			uint8_t EKey : 1;
+			uint8_t FKey : 1;
+			uint8_t GKey : 1;
+			uint8_t HKey : 1;
+			uint8_t IKey : 1;
+			uint8_t JKey : 1;
+			uint8_t KKey : 1;
+			uint8_t LKey : 1;
+			uint8_t MKey : 1;
+			uint8_t NKey : 1;
+			uint8_t OKey : 1;
+			uint8_t PKey : 1;
+			uint8_t QKey : 1;
+			uint8_t RKey : 1;
+			uint8_t SKey : 1;
+			uint8_t TKey : 1;
+			uint8_t UKey : 1;
+			uint8_t VKey : 1;
+			uint8_t WKey : 1;
+			uint8_t XKey : 1;
+			uint8_t YKey : 1;
+			uint8_t ZKey : 1;
+		};
+		union SKeyboardStateMaskUnion
+		{
+ 			FKeyboardState KeyboardState;
+			uint32_t Mask;
+		};
+		SKeyboardStateMaskUnion KeyboardStateMask{};
+		// The keyboard keys that changed in the most recent update
+		SKeyboardStateMaskUnion KeyboardStateChangedMask{};
+
+		FKeyboardState GetKeyboardState() const { return KeyboardStateMask.KeyboardState; }
+		FKeyboardState GetKeyboardStateChange() const { return KeyboardStateChangedMask.KeyboardState; }
+
+	} InputState;
+	
 	float modelRotationRad = 0.f;
 
 	glm::vec3 cameraPosition = {-2.f, 0.f, 2.f};
